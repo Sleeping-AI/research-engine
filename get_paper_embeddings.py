@@ -1,46 +1,45 @@
-import pickle
 import os
+import pyarrow as pa
+import pyarrow.parquet as pq
+import pandas as pd
 from model2vec import StaticModel
+import sys
 
 model = StaticModel.from_pretrained("minishlab/potion-base-8M")
 
-def is_title_already_in_data(doc, data):
-    title = doc['title'].lower().strip()
-    for d in data:
-        if title == d['title'].lower().strip():
-            return False
-    return True
+def get_paper_embedding(csv_file, output_dir, batch_size=10000):
+    df = pd.read_csv(csv_file)
 
-def embed_and_save_papers_with_model2vec(papers, query, output_dir):
-    data = []
-    for paper in papers:
-        if paper['title'] and paper['abstract'] and is_title_already_in_data(paper, data):
-            data.append(paper)
+    if 'Title' not in df.columns or 'Abstract' not in df.columns:
+        raise ValueError("CSV file must contain 'Title' and 'Abstract' columns")
 
-    print(f"Embedding {len(data)} papers about {query}")
+    os.makedirs(output_dir, exist_ok=True)
 
-    data_for_embedding = [f"Title: {d['title'].strip()} ; Abstract: {d['abstract'].strip()}" for d in data]
+    total_rows = len(df)
+    for i in range(0, total_rows, batch_size):
+        batch = df.iloc[i:i+batch_size]
 
-    embeddings = model.encode(data_for_embedding)
+        sys.stdout.write(f"\rProcessing {len(batch)} rows... ")
+        sys.stdout.flush()
 
-    text_embedding_tuplist = [(text['title'], text['abstract'], text['link'], embedding) for text, embedding in zip(data, embeddings)]
+        data_for_embedding = [f"Title: {row['Title'].strip()} ; Abstract: {row['Abstract'].strip()}" for _, row in batch.iterrows()]
+        embeddings = model.encode(data_for_embedding)
 
-    # Ensure the directory exists
-    output_path = f'{output_dir}/{query}'
-    os.makedirs(output_path, exist_ok=True)
+        batch_dict = {
+            "Title": batch["Title"].tolist(),
+            "Abstract": batch["Abstract"].tolist(),
+            "Categories": batch.get("Categories", "").tolist(),
+            "Embedding": embeddings.tolist()
+        }
 
-    pickle_output_path = f'{output_path}/{query}_embeddings.pkl'
-    with open(pickle_output_path, 'wb') as f:
-        pickle.dump(text_embedding_tuplist, f)
+        table = pa.Table.from_pydict(batch_dict)
+        output_path = os.path.join(output_dir, f"{i//batch_size:04d}.parquet")
+        pq.write_table(table, output_path)
 
-    print(f"Text Embedding Done!")
-    return text_embedding_tuplist
+        sys.stdout.write(f"\rSaved {len(batch)} rows to {output_path}    \n")
+        sys.stdout.flush()
 
 if __name__ == "__main__":
-    query = 'AI Research'
-    output_dir = '/content'
-    papers = [
-        {'title': 'AI in Healthcare', 'abstract': 'Exploring AI in the healthcare industry', 'link': 'https://example.com/1'},
-        {'title': 'Deep Learning Advances', 'abstract': 'Recent progress in deep learning', 'link': 'https://example.com/2'}
-    ]
-    embed_and_save_papers_with_model2vec(papers, query, output_dir)
+    csv_file = "arxiv-csv.csv"
+    output_dir = "paper"
+    get_paper_embedding(csv_file, output_dir)
