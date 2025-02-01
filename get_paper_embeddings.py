@@ -1,7 +1,7 @@
 import os
-import pyarrow as pa
-import pyarrow.parquet as pq
+import pickle
 import pandas as pd
+import time
 from model2vec import StaticModel
 import sys
 
@@ -23,12 +23,14 @@ def get_paper_embedding(csv_file, output_dir, batch_size=30, rows_per_file=2000)
 
     print(f"Total {total_batches} batches needed.")
     print(f"Each batch will contain {batch_size} rows.")
-    print(f"Each Parquet file will have up to {rows_per_file} rows.")
+    print(f"Each Pickle file will have up to {rows_per_file} rows.")
 
     os.makedirs(output_dir, exist_ok=True)
 
     batch_counter = 0
     file_counter = 0
+
+    start_embedding_time = time.time()
 
     for i in range(0, total_rows, batch_size):
         batch = df.iloc[i:i+batch_size]
@@ -50,17 +52,19 @@ def get_paper_embedding(csv_file, output_dir, batch_size=30, rows_per_file=2000)
             "Abstract_Embedding": embeddings_abstracts.tolist()
         }
 
-        table = pa.Table.from_pydict(batch_dict)
-
         if (batch_counter + 1) * batch_size >= (file_counter + 1) * rows_per_file:
-            output_path = os.path.join(output_dir, f"{file_counter:04d}.parquet")
-            pq.write_table(table, output_path)
+            output_path = os.path.join(output_dir, f"{file_counter:04d}.pkl")
+            with open(output_path, 'wb') as f:
+                pickle.dump(batch_dict, f)
             file_counter += 1
             print(f"\rSaved {len(batch)} rows to {output_path}...     ", end="")
 
         batch_counter += 1
 
-    print(f"\nAll {total_rows} rows processed and saved.")
+    end_embedding_time = time.time()
+    embedding_time_taken = (end_embedding_time - start_embedding_time) / 60
+    print(f"\nEmbedding generation completed.")
+    print(f"Time taken for embedding generation: {embedding_time_taken:.2f} minutes.")
 
 if __name__ == "__main__":
     csv_file = "arxiv-csv.csv"
